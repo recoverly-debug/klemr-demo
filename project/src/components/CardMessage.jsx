@@ -64,6 +64,33 @@ export function InlineActions({ chips, onPick, cardKey, contextLabel, onCustom, 
   );
 }
 
+export function PickedLine({ chips, pickedLabel }) {
+  return (
+    <div className="k-mono k-fade-in" style={{
+      fontSize: 13, color: C.textMuted, marginTop: 10,
+      display: "flex", flexWrap: "wrap", alignItems: "center", gap: 0,
+      lineHeight: 1.6,
+    }}>
+      <span style={{ color: C.textMuted, marginRight: 8 }}>you picked</span>
+      {chips.map((c, i) => {
+        const isPicked = c.label === pickedLabel;
+        return (
+          <React.Fragment key={c.label}>
+            {i > 0 && <span style={{ color: C.textMuted, padding: "0 8px", opacity: 0.5 }}>·</span>}
+            <span style={{
+              color: isPicked ? C.text : C.textMuted,
+              opacity: isPicked ? 1 : 0.55,
+              fontWeight: isPicked ? 600 : 400,
+              textDecoration: isPicked && c.primary ? `underline 1px ${C.amber}` : "none",
+              textUnderlineOffset: 3,
+            }}>{c.label}</span>
+          </React.Fragment>
+        );
+      })}
+    </div>
+  );
+}
+
 export function CardMessage({
   headline, body, lean, chips, resolved, onPick, isCurrent,
   typed = false, startDelay = 0, headlineHtml, bodyHtml, speed = 8, onTyped,
@@ -127,28 +154,7 @@ export function CardMessage({
           )}
         </div>
         {pickedLabel && chips && (
-          <div className="k-mono k-fade-in" style={{
-            fontSize: 13, color: C.textMuted, marginTop: 10,
-            display: "flex", flexWrap: "wrap", alignItems: "center", gap: 0,
-            lineHeight: 1.6,
-          }}>
-            <span style={{ color: C.textMuted, marginRight: 8 }}>you picked</span>
-            {chips.map((c, i) => {
-              const isPicked = c.label === pickedLabel;
-              return (
-                <React.Fragment key={c.label}>
-                  {i > 0 && <span style={{ color: C.textMuted, padding: "0 8px", opacity: 0.5 }}>·</span>}
-                  <span style={{
-                    color: isPicked ? C.text : C.textMuted,
-                    opacity: isPicked ? 1 : 0.55,
-                    fontWeight: isPicked ? 600 : 400,
-                    textDecoration: isPicked && c.primary ? `underline 1px ${C.amber}` : "none",
-                    textUnderlineOffset: 3,
-                  }}>{c.label}</span>
-                </React.Fragment>
-              );
-            })}
-          </div>
+          <PickedLine chips={chips} pickedLabel={pickedLabel} />
         )}
         <div style={{
           fontFamily: "'Geist', system-ui, sans-serif", fontSize: 14, lineHeight: 1.5,

@@ -7,7 +7,7 @@ import {
 } from "../data.js";
 import { Typewriter, RichTypewriter } from "../components/Typewriter.jsx";
 import { AgentLine, UserLine, ActiveInputCtx, DelayedReveal } from "../components/AgentLine.jsx";
-import { CardMessage, InlineActions } from "../components/CardMessage.jsx";
+import { CardMessage, InlineActions, PickedLine } from "../components/CardMessage.jsx";
 import { AskKlemr } from "../components/AskKlemr.jsx";
 import { ActingOnRail } from "../components/ActingOnRail.jsx";
 
@@ -154,12 +154,24 @@ export function OverviewView({ recovered, flash, logEntries, scanIdx, scanProgre
     setThread(t => [...t, { id: uid, kind: "user", text: label, fromChip: true }]);
   }, []);
 
+  // Terminal state — once the recap's "next thing" line has landed, the
+  // morning is resolved. Every chip in the thread (and any superseded
+  // card chrome above) should disable so a stray click can't re-run the
+  // resolution outcomes or stack another recap.
+  const morningResolved = thread.some(it =>
+    it.kind === "agent" &&
+    (it.text || "").startsWith("i'll bring you the next thing")
+  );
+
   const withUserTurnAndStream = useCallback((inner) => (c) => {
+    // After the recap, every chip is dead — belt-and-suspenders against
+    // any superseded prop the JSX missed.
+    if (morningResolved) return;
     if (c === null) { inner(c); return; }
     if (c.custom) { inner(c); return; }
     appendUserChip(c.label);
     afterStream(() => inner(c));
-  }, [appendUserChip, afterStream]);
+  }, [appendUserChip, afterStream, morningResolved]);
 
   const onAsk = useCallback((text, refKey) => {
     const uid = `u-${Date.now()}`;
@@ -168,13 +180,30 @@ export function OverviewView({ recovered, flash, logEntries, scanIdx, scanProgre
 
     if (refKey === "card1" || refKey === "card2") {
       const customLine = `logged "${text}". i'll work on it and bring you the answer when it's ready.`;
+      // Already mid-conversation? Then everything goes to the thread.
+      // Don't mutate the standalone card state — its resolution lives
+      // entirely below, and the original card stays as superseded
+      // context above.
+      const inThreadMode = thread.length > 0;
+      const card2Extras = {
+        cardProps: {
+          label: collapsed.label,
+          headlineHtml: "11 ups commercial addresses got the residential fee",
+          bodyHtml: `same warehouse, same accounts, last 4 days. i can file all 11 as one batch claim, or wait a week to see if the pattern grows. <span style="color:${C.amber}">$1,832</span> at stake.`,
+          lean: "lean toward filing — the pattern's already clear.",
+          chips: c2Chips,
+        },
+        chipsTarget: "card2",
+      };
       const resolveCard = () => {
-        if (refKey === "card1") {
-          setC1({ tone: "muted", line: customLine });
-          setC1Done(true);
-        } else {
-          setC2({ tone: "muted", line: customLine });
-          setC2Done(true);
+        if (!inThreadMode) {
+          if (refKey === "card1") {
+            setC1({ tone: "muted", line: customLine });
+            setC1Done(true);
+          } else {
+            setC2({ tone: "muted", line: customLine });
+            setC2Done(true);
+          }
         }
         appendAgentToThread(customLine);
         if (refKey === "card1") {
@@ -182,16 +211,7 @@ export function OverviewView({ recovered, flash, logEntries, scanIdx, scanProgre
           setTimeout(() => {
             appendAgentToThread(
               "and a smaller pattern question — feels like a billing mistake on their end.",
-              {
-                cardProps: {
-                  label: collapsed.label,
-                  headlineHtml: "11 ups commercial addresses got the residential fee",
-                  bodyHtml: `same warehouse, same accounts, last 4 days. i can file all 11 as one batch claim, or wait a week to see if the pattern grows. <span style="color:${C.amber}">$1,832</span> at stake.`,
-                  lean: "lean toward filing — the pattern's already clear.",
-                  chips: c2Chips,
-                },
-                chipsTarget: "card2",
-              }
+              card2Extras
             );
           }, d);
         }
@@ -311,7 +331,7 @@ export function OverviewView({ recovered, flash, logEntries, scanIdx, scanProgre
           lean={expanded.lean}
           chips={c1Chips}
           resolved={c1}
-          superseded={card1Superseded}
+          superseded={card1Superseded || morningResolved}
           cardKey="card1"
           contextLabel="#VB-44087"
           isCurrent={currentKey === "card1"}
@@ -364,7 +384,7 @@ export function OverviewView({ recovered, flash, logEntries, scanIdx, scanProgre
           })}
         />
 
-        {c1 && c1Done && (
+        {c1 && c1Done && thread.length === 0 && (
           <AgentLine>
             <Typewriter text="and a smaller pattern question — feels like a billing mistake on their end." speed={8} delay={200} />
           </AgentLine>
@@ -380,7 +400,7 @@ export function OverviewView({ recovered, flash, logEntries, scanIdx, scanProgre
             lean="lean toward filing — the pattern's already clear."
             chips={c2Chips}
             resolved={c2}
-            superseded={card2Superseded}
+            superseded={card2Superseded || morningResolved}
             cardKey="card2"
             contextLabel="the 11 ups reclassifications"
             isCurrent={currentKey === "card2"}
@@ -482,11 +502,15 @@ export function OverviewView({ recovered, flash, logEntries, scanIdx, scanProgre
                           nested
                           cardKey={item.id}
                           contextLabel={item.chipsTarget === "card2" ? "the 11 ups reclassifications" : undefined}
+                          resolved={item.chipsTarget === "card2" ? c2 : undefined}
+                          superseded={item.chipsTarget === "card2" ? (card2Superseded || morningResolved) : false}
                           onTyped={() => setCard2Typed(true)}
                           onCustom={() => focusComposerForCard("card2")}
                           onPick={withUserTurnAndStream((c) => {
                             if (item.chipsTarget === "card2") {
-                              if (c === null) return;
+                              if (c === null) { setC2(null); setC2Done(false); return; }
+                              setC2(c.outcome);
+                              setC2Done(true);
                               appendAgentToThread(c.outcome.line);
                               const d1 = c.outcome.line.length * RESOLVED_SPEED + 500;
                               setTimeout(() => {
@@ -508,6 +532,15 @@ export function OverviewView({ recovered, flash, logEntries, scanIdx, scanProgre
                     );
                   })()}
                   {item.reaskFor && (() => {
+                    // Already answered → collapse to the same muted
+                    // "you picked" treatment used by resolved cards.
+                    if (item.pickedLabel) {
+                      return (
+                        <div style={{ marginTop: 4 }}>
+                          <PickedLine chips={item.chips} pickedLabel={item.pickedLabel} />
+                        </div>
+                      );
+                    }
                     const textLen = (item.text || "").length;
                     const chipsStart = 120 + textLen * 8 + 280;
                     return (
@@ -516,8 +549,14 @@ export function OverviewView({ recovered, flash, logEntries, scanIdx, scanProgre
                           chips={item.chips}
                           cardKey={item.id}
                           contextLabel={item.contextLabel}
+                          superseded={morningResolved}
                           onCustom={() => focusComposerForCard(item.reaskFor)}
                           onPick={withUserTurnAndStream((c) => {
+                            // Stamp the pick onto the thread item so
+                            // the chip row collapses on next render.
+                            setThread(t => t.map(it =>
+                              it.id === item.id ? { ...it, pickedLabel: c.label } : it
+                            ));
                             if (item.reaskFor === "card1") {
                               setC1(c.outcome);
                               setC1Done(true);
