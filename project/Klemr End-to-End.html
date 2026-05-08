@@ -1286,6 +1286,37 @@ function InlineActions({ chips, onPick, cardKey, contextLabel, onCustom, superse
   );
 }
 
+// Picked-action row — collapsed muted display of the user's choice
+// alongside the (now-muted) alternatives that were on offer. Shared
+// between CardMessage's resolved branch and the re-ask thread row so
+// the visual treatment stays in one place.
+function PickedLine({ chips, pickedLabel }) {
+  return (
+    <div className="k-mono k-fade-in" style={{
+      fontSize: 13, color: C.textMuted, marginTop: 10,
+      display: "flex", flexWrap: "wrap", alignItems: "center", gap: 0,
+      lineHeight: 1.6,
+    }}>
+      <span style={{ color: C.textMuted, marginRight: 8 }}>you picked</span>
+      {chips.map((c, i) => {
+        const isPicked = c.label === pickedLabel;
+        return (
+          <React.Fragment key={c.label}>
+            {i > 0 && <span style={{ color: C.textMuted, padding: "0 8px", opacity: 0.5 }}>·</span>}
+            <span style={{
+              color: isPicked ? C.text : C.textMuted,
+              opacity: isPicked ? 1 : 0.55,
+              fontWeight: isPicked ? 600 : 400,
+              textDecoration: isPicked && c.primary ? `underline 1px ${C.amber}` : "none",
+              textUnderlineOffset: 3,
+            }}>{c.label}</span>
+          </React.Fragment>
+        );
+      })}
+    </div>
+  );
+}
+
 // Undo button for resolved cards — fades in only after the resolved
 // line finishes typing, so it doesn't crowd the conversational reveal.
 function ResolvedUndo({ onClick, revealAfterMs }) {
@@ -1406,28 +1437,7 @@ function CardMessage({
             other (now-muted) options, so the decision is legible at a
             glance without losing the alternatives that were on offer. */}
         {pickedLabel && chips && (
-          <div className="k-mono k-fade-in" style={{
-            fontSize: 13, color: C.textMuted, marginTop: 10,
-            display: "flex", flexWrap: "wrap", alignItems: "center", gap: 0,
-            lineHeight: 1.6,
-          }}>
-            <span style={{ color: C.textMuted, marginRight: 8 }}>you picked</span>
-            {chips.map((c, i) => {
-              const isPicked = c.label === pickedLabel;
-              return (
-                <React.Fragment key={c.label}>
-                  {i > 0 && <span style={{ color: C.textMuted, padding: "0 8px", opacity: 0.5 }}>·</span>}
-                  <span style={{
-                    color: isPicked ? C.text : C.textMuted,
-                    opacity: isPicked ? 1 : 0.55,
-                    fontWeight: isPicked ? 600 : 400,
-                    textDecoration: isPicked && c.primary ? `underline 1px ${C.amber}` : "none",
-                    textUnderlineOffset: 3,
-                  }}>{c.label}</span>
-                </React.Fragment>
-              );
-            })}
-          </div>
+          <PickedLine chips={chips} pickedLabel={pickedLabel} />
         )}
         {/* Resolved reply + undo. */}
         <div style={{
@@ -1858,13 +1868,30 @@ function OverviewView({ recovered, flash, logEntries, scanIdx, scanProgress, act
     // semantics, just routed through the bottom composer).
     if (refKey === "card1" || refKey === "card2") {
       const customLine = `logged "${text}". i'll work on it and bring you the answer when it's ready.`;
+      // Already mid-conversation? Then everything goes to the thread.
+      // Don't mutate the standalone card state — its resolution lives
+      // entirely below, and the original card stays as superseded
+      // context above.
+      const inThreadMode = thread.length > 0;
+      const card2Extras = {
+        cardProps: {
+          label: collapsed.label,
+          headlineHtml: "11 ups commercial addresses got the residential fee",
+          bodyHtml: `same warehouse, same accounts, last 4 days. i can file all 11 as one batch claim, or wait a week to see if the pattern grows. <span style="color:${C.amber}">$1,832</span> at stake.`,
+          lean: "lean toward filing — the pattern's already clear.",
+          chips: c2Chips,
+        },
+        chipsTarget: "card2",
+      };
       const resolveCard = () => {
-        if (refKey === "card1") {
-          setC1({ tone: "muted", line: customLine });
-          setC1Done(true);
-        } else {
-          setC2({ tone: "muted", line: customLine });
-          setC2Done(true);
+        if (!inThreadMode) {
+          if (refKey === "card1") {
+            setC1({ tone: "muted", line: customLine });
+            setC1Done(true);
+          } else {
+            setC2({ tone: "muted", line: customLine });
+            setC2Done(true);
+          }
         }
         appendAgentToThread(customLine);
         // Card 1 → chain card 2 question.
@@ -1873,16 +1900,7 @@ function OverviewView({ recovered, flash, logEntries, scanIdx, scanProgress, act
           setTimeout(() => {
             appendAgentToThread(
               "and a smaller pattern question — feels like a billing mistake on their end.",
-              {
-                cardProps: {
-                  label: collapsed.label,
-                  headlineHtml: "11 ups commercial addresses got the residential fee",
-                  bodyHtml: `same warehouse, same accounts, last 4 days. i can file all 11 as one batch claim, or wait a week to see if the pattern grows. <span style=\"color:${C.amber}\">$1,832</span> at stake.`,
-                  lean: "lean toward filing — the pattern's already clear.",
-                  chips: c2Chips,
-                },
-                chipsTarget: "card2",
-              }
+              card2Extras
             );
           }, d);
         }
@@ -1966,11 +1984,23 @@ function OverviewView({ recovered, flash, logEntries, scanIdx, scanProgress, act
     setThread(t => [...t, { id: uid, kind: "user", text: label, fromChip: true }]);
   }, []);
 
+  // Terminal state — once the recap's "next thing" line has landed, the
+  // morning is resolved. Every chip in the thread (and any superseded
+  // card chrome above) should disable so a stray click can't re-run the
+  // resolution outcomes or stack another recap.
+  const morningResolved = thread.some(it =>
+    it.kind === "agent" &&
+    (it.text || "").startsWith("i'll bring you the next thing")
+  );
+
   // Wrap a card's onPick so every chip click renders a user-turn first,
   // and the agent's resolution waits for any in-flight typewriter to
   // complete before landing. Undo (c === null) and custom (c.custom) are
   // pass-through. Returns a wrapped onPick.
   const withUserTurnAndStream = useCallback((inner) => (c) => {
+    // After the recap, every chip is dead — belt-and-suspenders against
+    // any superseded prop the JSX missed.
+    if (morningResolved) return;
     // Undo / null pass through.
     if (c === null) { inner(c); return; }
     // Custom (composer-routed) replies already produced a user turn via
@@ -1978,7 +2008,7 @@ function OverviewView({ recovered, flash, logEntries, scanIdx, scanProgress, act
     if (c.custom) { inner(c); return; }
     appendUserChip(c.label);
     afterStream(() => inner(c));
-  }, [appendUserChip, afterStream]);
+  }, [appendUserChip, afterStream, morningResolved]);
 
   // ─── Mid-stream protection: see streamingRef declarations above.
 
@@ -2065,7 +2095,7 @@ function OverviewView({ recovered, flash, logEntries, scanIdx, scanProgress, act
           lean={expanded.lean}
           chips={c1Chips}
           resolved={c1}
-          superseded={card1Superseded}
+          superseded={card1Superseded || morningResolved}
           cardKey="card1"
           contextLabel="#VB-44087"
           isCurrent={currentKey === "card1"}
@@ -2132,7 +2162,7 @@ function OverviewView({ recovered, flash, logEntries, scanIdx, scanProgress, act
           })}
         />
 
-        {c1 && c1Done && (
+        {c1 && c1Done && thread.length === 0 && (
           <AgentLine time="just now" delay={120}>
             <Typewriter text="and a smaller pattern question — feels like a billing mistake on their end." speed={8} delay={200} />
           </AgentLine>
@@ -2148,7 +2178,7 @@ function OverviewView({ recovered, flash, logEntries, scanIdx, scanProgress, act
             lean="lean toward filing — the pattern's already clear."
             chips={c2Chips}
             resolved={c2}
-            superseded={card2Superseded}
+            superseded={card2Superseded || morningResolved}
             cardKey="card2"
             contextLabel="the 11 ups reclassifications"
             isCurrent={currentKey === "card2"}
@@ -2260,11 +2290,15 @@ function OverviewView({ recovered, flash, logEntries, scanIdx, scanProgress, act
                           nested
                           cardKey={item.id}
                           contextLabel={item.chipsTarget === "card2" ? "the 11 ups reclassifications" : undefined}
+                          resolved={item.chipsTarget === "card2" ? c2 : undefined}
+                          superseded={item.chipsTarget === "card2" ? (card2Superseded || morningResolved) : false}
                           onTyped={() => setCard2Typed(true)}
                           onCustom={() => focusComposerForCard("card2")}
                           onPick={withUserTurnAndStream((c) => {
                             if (item.chipsTarget === "card2") {
-                              if (c === null) return;
+                              if (c === null) { setC2(null); setC2Done(false); return; }
+                              setC2(c.outcome);
+                              setC2Done(true);
                               appendAgentToThread(c.outcome.line);
                               const d1 = c.outcome.line.length * RESOLVED_SPEED + 500;
                               setTimeout(() => {
@@ -2292,6 +2326,16 @@ function OverviewView({ recovered, flash, logEntries, scanIdx, scanProgress, act
                       via InlineActions. Picking a chip resolves the
                       original card silently and continues the thread. */}
                   {item.reaskFor && (() => {
+                    // Already answered → collapse to a muted "you picked"
+                    // line, matching CardMessage's resolved branch so the
+                    // two surfaces look like one component.
+                    if (item.pickedLabel) {
+                      return (
+                        <div style={{ marginTop: 4 }}>
+                          <PickedLine chips={item.chips} pickedLabel={item.pickedLabel} />
+                        </div>
+                      );
+                    }
                     const textLen = (item.text || "").length;
                     const chipsStart = 120 + textLen * 8 + 280;
                     return (
@@ -2300,8 +2344,15 @@ function OverviewView({ recovered, flash, logEntries, scanIdx, scanProgress, act
                           chips={item.chips}
                           cardKey={item.id}
                           contextLabel={item.contextLabel}
+                          superseded={morningResolved}
                           onCustom={() => focusComposerForCard(item.reaskFor)}
                           onPick={withUserTurnAndStream((c) => {
+                            // Stamp the pick onto the thread item so the
+                            // chip row collapses to PickedLine on the
+                            // next render.
+                            setThread(t => t.map(it =>
+                              it.id === item.id ? { ...it, pickedLabel: c.label } : it
+                            ));
                             if (item.reaskFor === "card1") {
                               // Resolve card1 silently up the page; chain
                               // forward the same way the original onPick
