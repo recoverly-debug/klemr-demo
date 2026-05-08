@@ -3,8 +3,9 @@ import React, {
 } from "react";
 import { C, fmt$ } from "../tokens.js";
 import {
-  NEEDS_YOU, QUICK_ACTIONS, PROMPTS_CARD1, PROMPTS_CARD2, PROMPTS_RECAP, PROMPT_REPLIES,
+  QUICK_ACTIONS, PROMPTS_CARD1, PROMPTS_CARD2, PROMPTS_RECAP, PROMPT_REPLIES,
 } from "../data.js";
+import { buildMorningBriefings } from "../data/briefings.js";
 import { Typewriter, RichTypewriter } from "../components/Typewriter.jsx";
 import { AgentLine, UserLine, ActiveInputCtx, DelayedReveal } from "../components/AgentLine.jsx";
 import { CardMessage, InlineActions, PickedLine } from "../components/CardMessage.jsx";
@@ -104,19 +105,35 @@ export function OverviewView({ recovered, flash, logEntries, scanIdx, scanProgre
     setComposerFocusN(n => n + 1);
   }, []);
 
-  const expanded = NEEDS_YOU[0];
-  const collapsed = NEEDS_YOU[1];
+  // Morning briefings — derived from dossiers awaiting your call.
+  // briefings[0] is the "expanded" (bigger one first) card; briefings[1]
+  // is the "collapsed" follow-up. Both carry headline/body/lean/label
+  // built from real dossier data.
+  const briefings = useMemo(() => buildMorningBriefings(), []);
+  const expanded = briefings[0];
+  const collapsed = briefings[1];
 
-  const c1Chips = [
+  const c1Chips = useMemo(() => [
     { label: "re-file with noaa", primary: true,  outcome: { tone: "won",   line: "noaa attachment sent. i'll log the response when it lands." } },
     { label: "call dispute line",                  outcome: { tone: "won",   line: "queued a dispute call for tomorrow morning." } },
     { label: "let it go",                          outcome: { tone: "muted", line: "letting it go. logged in the dossier." } },
-  ];
-  const c2Chips = [
+  ], []);
+  const c2Chips = useMemo(() => [
     { label: "file the batch", primary: true, outcome: { tone: "won",   line: "batch sent. watching for the reply alongside the others." } },
     { label: "wait a week",                    outcome: { tone: "muted", line: "holding for a week. i'll re-surface if it grows." } },
     { label: "open first",                     outcome: { tone: "muted", line: "opened in patterns view. come back when you're ready." }, then: () => setView && setView("patterns") },
-  ];
+  ], [setView]);
+
+  // Reused 3x: when card 2 lands as a chained thread item (after card 1
+  // was resolved off-script). Pulled into a constant so all 3 sites stay
+  // identical to the standalone card 2 render below.
+  const card2CardProps = useMemo(() => ({
+    label: collapsed.label,
+    headlineHtml: collapsed.headlineHtml,
+    bodyHtml: collapsed.bodyHtml,
+    lean: collapsed.lean,
+    chips: c2Chips,
+  }), [collapsed, c2Chips]);
 
   // Mid-stream protection
   const streamingRef = useRef(null);
@@ -185,16 +202,7 @@ export function OverviewView({ recovered, flash, logEntries, scanIdx, scanProgre
       // entirely below, and the original card stays as superseded
       // context above.
       const inThreadMode = thread.length > 0;
-      const card2Extras = {
-        cardProps: {
-          label: collapsed.label,
-          headlineHtml: "11 ups commercial addresses got the residential fee",
-          bodyHtml: `same warehouse, same accounts, last 4 days. i can file all 11 as one batch claim, or wait a week to see if the pattern grows. <span style="color:${C.amber}">$1,832</span> at stake.`,
-          lean: "lean toward filing — the pattern's already clear.",
-          chips: c2Chips,
-        },
-        chipsTarget: "card2",
-      };
+      const card2Extras = { cardProps: card2CardProps, chipsTarget: "card2" };
       const resolveCard = () => {
         if (!inThreadMode) {
           if (refKey === "card1") {
@@ -248,7 +256,7 @@ export function OverviewView({ recovered, flash, logEntries, scanIdx, scanProgre
               reaskFor: "card2",
               text: "anyway — still on you for the 11 reclassifications.",
               chips: c2Chips,
-              contextLabel: "the 11 ups reclassifications",
+              contextLabel: collapsed.contextLabel,
             }];
           }
           return t;
@@ -260,7 +268,7 @@ export function OverviewView({ recovered, flash, logEntries, scanIdx, scanProgre
           ? "anyway — still on you for the fedex denial."
           : "anyway — still on you for the 11 reclassifications.";
         const reaskChips = reaskFor === "card1" ? c1Chips : c2Chips;
-        const ctxLabel = reaskFor === "card1" ? "#VB-44087" : "the 11 ups reclassifications";
+        const ctxLabel = reaskFor === "card1" ? expanded.contextLabel : collapsed.contextLabel;
         return [...t, {
           id: rid, kind: "agent",
           reaskFor,
@@ -270,7 +278,7 @@ export function OverviewView({ recovered, flash, logEntries, scanIdx, scanProgre
         }];
       });
     }, replyTypeMs);
-  }, [setView, c1, c2, c1Chips, c2Chips, afterStream, collapsed]);
+  }, [setView, c1, c2, c1Chips, c2Chips, afterStream, collapsed, expanded, card2CardProps]);
 
   const bothResolved = c1 && c2;
 
@@ -326,14 +334,14 @@ export function OverviewView({ recovered, flash, logEntries, scanIdx, scanProgre
           label={expanded.label}
           typed
           startDelay={1250}
-          headlineHtml={`fedex denied <em style="font-style:italic;font-weight:500">#VB-44087</em>'s late-delivery claim`}
-          bodyHtml={expanded.briefing}
+          headlineHtml={expanded.headlineHtml}
+          bodyHtml={expanded.bodyHtml}
           lean={expanded.lean}
           chips={c1Chips}
           resolved={c1}
           superseded={card1Superseded || morningResolved}
           cardKey="card1"
-          contextLabel="#VB-44087"
+          contextLabel={expanded.contextLabel}
           isCurrent={currentKey === "card1"}
           onTyped={() => setCard1Typed(true)}
           onCustom={() => focusComposerForCard("card1")}
@@ -345,16 +353,7 @@ export function OverviewView({ recovered, flash, logEntries, scanIdx, scanProgre
               setTimeout(() => {
                 appendAgentToThread(
                   "and a smaller pattern question — feels like a billing mistake on their end.",
-                  {
-                    cardProps: {
-                      label: collapsed.label,
-                      headlineHtml: "11 ups commercial addresses got the residential fee",
-                      bodyHtml: `same warehouse, same accounts, last 4 days. i can file all 11 as one batch claim, or wait a week to see if the pattern grows. <span style="color:${C.amber}">$1,832</span> at stake.`,
-                      lean: "lean toward filing — the pattern's already clear.",
-                      chips: c2Chips,
-                    },
-                    chipsTarget: "card2",
-                  }
+                  { cardProps: card2CardProps, chipsTarget: "card2" }
                 );
               }, tdelay);
               if (c.then) c.then();
@@ -367,16 +366,7 @@ export function OverviewView({ recovered, flash, logEntries, scanIdx, scanProgre
               setTimeout(() => {
                 appendAgentToThread(
                   "and a smaller pattern question — feels like a billing mistake on their end.",
-                  {
-                    cardProps: {
-                      label: collapsed.label,
-                      headlineHtml: "11 ups commercial addresses got the residential fee",
-                      bodyHtml: `same warehouse, same accounts, last 4 days. i can file all 11 as one batch claim, or wait a week to see if the pattern grows. <span style="color:${C.amber}">$1,832</span> at stake.`,
-                      lean: "lean toward filing — the pattern's already clear.",
-                      chips: c2Chips,
-                    },
-                    chipsTarget: "card2",
-                  }
+                  { cardProps: card2CardProps, chipsTarget: "card2" }
                 );
               }, ms + 200);
             }
@@ -395,14 +385,14 @@ export function OverviewView({ recovered, flash, logEntries, scanIdx, scanProgre
             label={collapsed.label}
             typed
             startDelay={1700}
-            headlineHtml="11 ups commercial addresses got the residential fee"
-            bodyHtml={`same warehouse, same accounts, last 4 days. i can file all 11 as one batch claim, or wait a week to see if the pattern grows. <span style="color:${C.amber}">$1,832</span> at stake.`}
-            lean="lean toward filing — the pattern's already clear."
+            headlineHtml={collapsed.headlineHtml}
+            bodyHtml={collapsed.bodyHtml}
+            lean={collapsed.lean}
             chips={c2Chips}
             resolved={c2}
             superseded={card2Superseded || morningResolved}
             cardKey="card2"
-            contextLabel="the 11 ups reclassifications"
+            contextLabel={collapsed.contextLabel}
             isCurrent={currentKey === "card2"}
             onTyped={() => setCard2Typed(true)}
             onCustom={() => focusComposerForCard("card2")}
@@ -501,7 +491,7 @@ export function OverviewView({ recovered, flash, logEntries, scanIdx, scanProgre
                           isCurrent={false}
                           nested
                           cardKey={item.id}
-                          contextLabel={item.chipsTarget === "card2" ? "the 11 ups reclassifications" : undefined}
+                          contextLabel={item.chipsTarget === "card2" ? collapsed.contextLabel : undefined}
                           resolved={item.chipsTarget === "card2" ? c2 : undefined}
                           superseded={item.chipsTarget === "card2" ? (card2Superseded || morningResolved) : false}
                           onTyped={() => setCard2Typed(true)}
@@ -566,16 +556,7 @@ export function OverviewView({ recovered, flash, logEntries, scanIdx, scanProgre
                                 setTimeout(() => {
                                   appendAgentToThread(
                                     "and a smaller pattern question — feels like a billing mistake on their end.",
-                                    {
-                                      cardProps: {
-                                        label: collapsed.label,
-                                        headlineHtml: "11 ups commercial addresses got the residential fee",
-                                        bodyHtml: `same warehouse, same accounts, last 4 days. i can file all 11 as one batch claim, or wait a week to see if the pattern grows. <span style="color:${C.amber}">$1,832</span> at stake.`,
-                                        lean: "lean toward filing — the pattern's already clear.",
-                                        chips: c2Chips,
-                                      },
-                                      chipsTarget: "card2",
-                                    }
+                                    { cardProps: card2CardProps, chipsTarget: "card2" }
                                   );
                                 }, delay);
                               }
